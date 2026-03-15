@@ -29,4 +29,8 @@ echo "Cargando partidos con pandas..."
 python3 2-cargar_partidos.py
 
 echo "--------------------------------------"
+echo "Cargando alineaciones con pandas..."
+python3 3-alineaciones.py
+
+echo "--------------------------------------"
 echo "Proceso terminado exitosamente!"
