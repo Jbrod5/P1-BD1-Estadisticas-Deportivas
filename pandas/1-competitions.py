@@ -10,41 +10,52 @@ def cargar_competencias():
             data = json.load(f)
         df = pd.json_normalize(data)
 
-        # Preparamos el archivo SQL de inserts :3
         with open('carga_datos.sql', 'w', encoding='utf-8') as sql_file:
             sql_file.write("USE ProyectoFutbol;\nGO\n\n")
 
-        # --- LIMPIEZA DE COMPETICIONES ---
-        df_comp = df[['competition_id', 'competition_name']].drop_duplicates()
-        df_comp.columns = ['id_competicion', 'nombre']
+        # --- PROCESAMIENTO DINÁMICO ---
+        with engine.connect() as conn:
+            
+            # 1. Competiciones
+            print("Evaluando competiciones...")
+            for _, row in df[['competition_id', 'competition_name']].drop_duplicates().iterrows():
+                # Verificamos si existe, si no, lo agregamos
+                query = sa.text("""
+                    IF NOT EXISTS (SELECT 1 FROM competicion WHERE id_competicion = :id)
+                    INSERT INTO competicion (id_competicion, nombre) VALUES (:id, :nom)
+                """)
+                conn.execute(query, {"id": row['competition_id'], "nom": row['competition_name']})
+                
+                with open('carga_datos.sql', 'a', encoding='utf-8') as f_sql:
+                    f_sql.write(f"IF NOT EXISTS (SELECT 1 FROM competicion WHERE id_competicion = {row['competition_id']}) "
+                                f"INSERT INTO competicion (id_competicion, nombre) VALUES ({row['competition_id']}, '{row['competition_name']}');\n")
 
-        # --- LIMPIEZA DE TEMPORADAS ---
-        df_temp = df[['season_id', 'season_name']].copy()
-        df_temp['anio_inicio'] = df_temp['season_name'].str.extract(r'^(\d{4})').astype(int)
-        df_temp['anio_fin'] = df_temp['season_name'].str.extract(r'(\d{4})$')
-        df_temp['anio_fin'] = df_temp['anio_fin'].fillna(df_temp['anio_inicio']).astype(int)
-        df_temp = df_temp[['season_id', 'anio_inicio', 'anio_fin']].drop_duplicates()
-        df_temp.columns = ['id_temporada', 'anio_inicio', 'anio_fin']
+            # 2. Temporadas
+            print("Evaluando temporadas...")
+            df_temp = df[['season_id', 'season_name']].copy()
+            df_temp['anio_inicio'] = df_temp['season_name'].str.extract(r'^(\d{4})').astype(int)
+            df_temp['anio_fin'] = df_temp['season_name'].str.extract(r'(\d{4})$')
+            df_temp['anio_fin'] = df_temp['anio_fin'].fillna(df_temp['anio_inicio']).astype(int)
+            
+            for _, row in df_temp[['season_id', 'anio_inicio', 'anio_fin']].drop_duplicates().iterrows():
+                query = sa.text("""
+                    IF NOT EXISTS (SELECT 1 FROM temporada WHERE id_temporada = :id)
+                    INSERT INTO temporada (id_temporada, anio_inicio, anio_fin) VALUES (:id, :ai, :af)
+                """)
+                conn.execute(query, {
+                    "id": int(row['season_id']), 
+                    "ai": int(row['anio_inicio']), 
+                    "af": int(row['anio_fin'])
+                })                
+                with open('carga_datos.sql', 'a', encoding='utf-8') as f_sql:
+                    f_sql.write(f"IF NOT EXISTS (SELECT 1 FROM temporada WHERE id_temporada = {row['season_id']}) "
+                                f"INSERT INTO temporada (id_temporada, anio_inicio, anio_fin) VALUES ({row['season_id']}, {row['anio_inicio']}, {row['anio_fin']});\n")
 
-        # --- CARGA A SQL Y GENERACION DE SCRIPT ---
-        print("Cargando competiciones :3")
-        df_comp.to_sql('competicion', engine, if_exists='append', index=False)
+            conn.commit()
+            with open('carga_datos.sql', 'a', encoding='utf-8') as f_sql:
+                f_sql.write("GO\n")
         
-        # Generar inserts para el archivo .sql
-        with open('carga_datos.sql', 'a', encoding='utf-8') as f:
-            for _, r in df_comp.iterrows():
-                f.write(f"INSERT INTO competicion (id_competicion, nombre) VALUES ({r['id_competicion']}, '{r['nombre']}');\n")
-            f.write("GO\n\n")
-
-        print("Cargando temporadas :3")
-        df_temp.to_sql('temporada', engine, if_exists='append', index=False)
-        
-        with open('carga_datos.sql', 'a', encoding='utf-8') as f:
-            for _, r in df_temp.iterrows():
-                f.write(f"INSERT INTO temporada (id_temporada, anio_inicio, anio_fin) VALUES ({r['id_temporada']}, {r['anio_inicio']}, {r['anio_fin']});\n")
-            f.write("GO\n\n")
-        
-        print("Carga de competencias y temporadas lista :D")
+        print("¡Competencias y temporadas sincronizadas con éxito! :D")
 
     except Exception as e:
         print(f"Error: {e}")

@@ -33,4 +33,8 @@ echo "Cargando alineaciones con pandas..."
 python3 3-alineaciones.py
 
 echo "--------------------------------------"
+echo "Cargando eventos con pandas..."
+python3 4-eventos.py
+
+echo "--------------------------------------"
 echo "Proceso terminado exitosamente!"

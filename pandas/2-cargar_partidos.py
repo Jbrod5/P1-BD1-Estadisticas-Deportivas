@@ -7,7 +7,6 @@ import numpy as np
 engine = sa.create_engine("mssql+pyodbc://sa:SS12345#@localhost/ProyectoFutbol?driver=ODBC+Driver+17+for+SQL+Server")
 
 def sql_val(val):
-    """Auxiliar para formatear valores en SQL"""
     if val is None: return "NULL"
     if isinstance(val, str): return f"'{val.replace(chr(39), chr(39)+chr(39))}'"
     return str(val)
@@ -23,61 +22,60 @@ def cargar_archivo_partidos(ruta):
         with engine.connect() as conn:
             with open('carga_datos.sql', 'a', encoding='utf-8') as f_sql:
                 
-                # 1. NACIONALIDADES
+                # 1. NACIONALIDADES (Dinámico)
+                paises = []
                 if 'home_team.country.id' in df.columns:
-                    paises_h = df[['home_team.country.id', 'home_team.country.name']].rename(columns={'home_team.country.id':'id', 'home_team.country.name':'n'})
-                    paises_a = df[['away_team.country.id', 'away_team.country.name']].rename(columns={'away_team.country.id':'id', 'away_team.country.name':'n'})
-                    df_nac = pd.concat([paises_h, paises_a]).dropna().drop_duplicates()
-                    
+                    paises.append(df[['home_team.country.id', 'home_team.country.name']].rename(columns={'home_team.country.id':'id', 'home_team.country.name':'n'}))
+                if 'away_team.country.id' in df.columns:
+                    paises.append(df[['away_team.country.id', 'away_team.country.name']].rename(columns={'away_team.country.id':'id', 'away_team.country.name':'n'}))
+                if 'referee.country.id' in df.columns:
+                    paises.append(df[['referee.country.id', 'referee.country.name']].rename(columns={'referee.country.id':'id', 'referee.country.name':'n'}))
+                
+                if paises:
+                    df_nac = pd.concat(paises).dropna().drop_duplicates()
                     for _, row in df_nac.iterrows():
-                        try:
-                            conn.execute(sa.text("INSERT INTO nacionalidad (id_nacionalidad, nombre) VALUES (:id, :n)"), {"id": row['id'], "n": row['n']})
-                            conn.commit()
-                            f_sql.write(f"IF NOT EXISTS (SELECT 1 FROM nacionalidad WHERE id_nacionalidad = {row['id']}) INSERT INTO nacionalidad (id_nacionalidad, nombre) VALUES ({row['id']}, {sql_val(row['n'])});\n")
-                        except: pass
+                        conn.execute(sa.text("IF NOT EXISTS (SELECT 1 FROM nacionalidad WHERE id_nacionalidad = :id) "
+                                           "INSERT INTO nacionalidad (id_nacionalidad, nombre) VALUES (:id, :n)"), 
+                                           {"id": row['id'], "n": row['n']})
 
-                # 2. ESTADIOS
+                # 2. ESTADIOS (Con Ciudad arreglada)
                 if 'stadium.id' in df.columns:
-                    df_est = df[['stadium.id', 'stadium.name', 'stadium.country.name']].dropna().drop_duplicates()
+                    # Verificamos si existe la ciudad, si no, ponemos una por defecto
+                    tiene_ciudad = 'stadium.city.name' in df.columns
+                    cols = ['stadium.id', 'stadium.name', 'stadium.country.name']
+                    if tiene_ciudad:
+                        cols.append('stadium.city.name')
+                    
+                    df_est = df[cols].dropna(subset=['stadium.id']).drop_duplicates()
+                    
                     for _, row in df_est.iterrows():
-                        try:
-                            conn.execute(sa.text("INSERT INTO estadio (id_estadio, nombre, pais) VALUES (:id, :n, :p)"), {"id": row['stadium.id'], "n": row['stadium.name'], "p": row['stadium.country.name']})
-                            conn.commit()
-                            f_sql.write(f"IF NOT EXISTS (SELECT 1 FROM estadio WHERE id_estadio = {row['id']}) INSERT INTO estadio (id_estadio, nombre, pais) VALUES ({row['id']}, {sql_val(row['n'])}, {sql_val(row['p'])});\n")
-                        except: pass
-
-                # 3. ARBITROS 
+                        ciudad = row['stadium.city.name'] if tiene_ciudad else 'Desconocida'
+                        conn.execute(sa.text("""
+                            IF NOT EXISTS (SELECT 1 FROM estadio WHERE id_estadio = :id) 
+                            INSERT INTO estadio (id_estadio, nombre, ciudad, pais) VALUES (:id, :n, :c, :p)
+                        """), {"id": int(row['stadium.id']), "n": row['stadium.name'], "c": ciudad, "p": row['stadium.country.name']})
+        
+        
+                # 3. ÁRBITROS
                 if 'referee.id' in df.columns:
-                    df_ref = df[['referee.id', 'referee.name', 'referee.country.id']].dropna().drop_duplicates()
+                    df_ref = df[['referee.id', 'referee.name', 'referee.country.id']].dropna(subset=['referee.id']).drop_duplicates()
                     for _, row in df_ref.iterrows():
-                        try:
-                            conn.execute(sa.text("INSERT INTO arbitro (id_arbitro, nombre, id_nacionalidad) VALUES (:id, :n, :nac)"), 
-                                         {"id": row['referee.id'], "n": row['referee.name'], "nac": row['referee.country.id']})
-                            conn.commit()
-                            f_sql.write(f"IF NOT EXISTS (SELECT 1 FROM arbitro WHERE id_arbitro = {row['id']}) INSERT INTO arbitro (id_arbitro, nombre, id_nacionalidad) VALUES ({row['id']}, {sql_val(row['n'])}, {sql_val(row['referee.country.id'])});\n")
-                        except: pass
+                        conn.execute(sa.text("IF NOT EXISTS (SELECT 1 FROM arbitro WHERE id_arbitro = :id) "
+                                           "INSERT INTO arbitro (id_arbitro, nombre, id_nacionalidad) VALUES (:id, :n, :nac)"), 
+                                           {"id": row['referee.id'], "n": row['referee.name'], "nac": row['referee.country.id']})
 
                 # 4. EQUIPOS
                 df_eq_h = df[['home_team.home_team_id', 'home_team.home_team_name']].rename(columns={'home_team.home_team_id':'id', 'home_team.home_team_name':'n'})
                 df_eq_a = df[['away_team.away_team_id', 'away_team.away_team_name']].rename(columns={'away_team.away_team_id':'id', 'away_team.away_team_name':'n'})
                 df_equipos = pd.concat([df_eq_h, df_eq_a]).drop_duplicates()
                 for _, row in df_equipos.iterrows():
-                    try:
-                        conn.execute(sa.text("INSERT INTO equipo (id_equipo, nombre) VALUES (:id, :n)"), {"id": row['id'], "n": row['n']})
-                        conn.commit()
-                        f_sql.write(f"IF NOT EXISTS (SELECT 1 FROM equipo WHERE id_equipo = {row['id']}) INSERT INTO equipo (id_equipo, nombre) VALUES ({row['id']}, {sql_val(row['n'])});\n")
-                    except: pass
+                    conn.execute(sa.text("IF NOT EXISTS (SELECT 1 FROM equipo WHERE id_equipo = :id) "
+                                       "INSERT INTO equipo (id_equipo, nombre) VALUES (:id, :n)"), 
+                                       {"id": row['id'], "n": row['n']})
 
-                # 5. PARTIDOS 
+                # 5. PARTIDOS (Insert con validación de existencia)
                 for _, row in df.iterrows():
                     try:
-                        # Insert arbitro preventivo
-                        if row.get('referee.id'):
-                            try:
-                                conn.execute(sa.text("INSERT INTO arbitro (id_arbitro, nombre) VALUES (:id, :n)"), {"id": row['referee.id'], "n": row['referee.name']})
-                                conn.commit()
-                            except: pass
-
                         params = {
                             "id": int(row['match_id']), "f": str(row['match_date']), "k": str(row['kick_off']), 
                             "gl": int(row['home_score']), "gv": int(row['away_score']), 
@@ -89,18 +87,19 @@ def cargar_archivo_partidos(ruta):
                         }
 
                         conn.execute(sa.text("""
+                            IF NOT EXISTS (SELECT 1 FROM partido WHERE id_partido = :id)
                             INSERT INTO partido (id_partido, fecha, kick_off, goles_local, goles_visita, fase, jornada, 
                                                id_competicion, id_temporada, id_estadio, id_equipo_local, id_equipo_visita, id_arbitro)
                             VALUES (:id, :f, :k, :gl, :gv, :fa, :jo, :ic, :it, :ie, :el, :ev, :ar)
                         """), params)
-                        conn.commit()
                         
-                        # Guardar el insert del partido en el .sql
-                        f_sql.write(f"INSERT INTO partido VALUES ({params['id']}, '{params['f']}', '{params['k']}', {params['gl']}, {params['gv']}, '{params['fa']}', {params['jo']}, {params['ic']}, {params['it']}, {sql_val(params['ie'])}, {params['el']}, {params['ev']}, {sql_val(params['ar'])});\n")
+                        f_sql.write(f"IF NOT EXISTS (SELECT 1 FROM partido WHERE id_partido = {params['id']}) "
+                                    f"INSERT INTO partido VALUES ({params['id']}, '{params['f']}', '{params['k']}', {params['gl']}, {params['gv']}, '{params['fa']}', {params['jo']}, {params['ic']}, {params['it']}, {sql_val(params['ie'])}, {params['el']}, {params['ev']}, {sql_val(params['ar'])});\n")
 
                     except Exception as e:
                         print(f"Error al insertar partido {row['match_id']}: {e}")
                 
+                conn.commit()
                 f_sql.write("GO\n")
 
     except Exception as e:
