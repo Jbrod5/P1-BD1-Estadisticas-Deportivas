@@ -36,5 +36,10 @@ echo "--------------------------------------"
 echo "Cargando eventos con pandas..."
 python3 4-eventos.py
 
+
+echo "--------------------------------------"
+echo "Cargando csvs con pandas..."
+python3 5-cargar_csv.py
+
 echo "--------------------------------------"
 echo "Proceso terminado exitosamente!"
