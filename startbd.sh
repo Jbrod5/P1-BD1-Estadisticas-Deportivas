@@ -20,6 +20,10 @@ fi
 
 cd pandas
 
+#Borrar los sql existentes
+rm ./carga_datos_csv.sql
+rm ./carga_datos.sql
+
 echo "--------------------------------------"
 echo "Cargando competiciones con pandas..."
 python3 1-competitions.py
