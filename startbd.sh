@@ -16,6 +16,9 @@ else
     exit 1
 fi
 
+#Por si acaso instalar las dependencias necesarias jeje
+pip install mplsoccer pandas matplotlib sqlalchemy pyodbc
+
 
 
 cd pandas
