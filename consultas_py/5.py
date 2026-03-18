@@ -7,30 +7,25 @@ import numpy
 print("Conectando a la base de datos...")
 motor_base_datos = sqlalchemy.create_engine("mssql+pyodbc://sa:SS12345#@localhost/ProyectoFutbol?driver=ODBC+Driver+17+for+SQL+Server")
 
-# 2. CONSULTA SQL CORREGIDA
-# Busca jugadores con mejor promedio de goles en Mundiales (mínimo 500 minutos)
+# 2. CONSULTA SQL
+# Busca los jugadores con mejor promedio de goles en mundiales
 consulta_sql = """
 SELECT TOP 5
     j.nombre AS NombreJugador,
     COUNT(g.id_evento) AS Goles,
-    SUM(aj.minuto_fin - aj.minuto_inicio) AS MinutosJugados,
-    (CAST(COUNT(g.id_evento) AS FLOAT) / 
-        NULLIF(SUM(aj.minuto_fin - aj.minuto_inicio), 0) * 90) AS GolesPor90Minutos
+    COUNT(DISTINCT p.id_partido) AS PartidosJugados,
+    (CAST(COUNT(g.id_evento) AS FLOAT) / NULLIF(COUNT(DISTINCT p.id_partido), 0)) AS PromedioGoles
 FROM jugador j
 JOIN evento ev ON j.id_jugador = ev.id_jugador
 JOIN gol g ON ev.id_evento = g.id_evento
 JOIN partido p ON ev.id_partido = p.id_partido
-JOIN competicion c ON p.id_competicion = c.id_competicion
-JOIN alineacion a ON p.id_partido = a.id_partido AND a.id_equipo = ev.id_equipo
-JOIN alineacion_jugador aj ON a.id_alineacion = aj.id_alineacion AND aj.id_jugador = j.id_jugador
-WHERE c.nombre = 'FIFA World Cup'
+WHERE p.id_competicion = (SELECT id_competicion FROM competicion WHERE nombre = 'FIFA World Cup')
 GROUP BY j.nombre
-HAVING SUM(aj.minuto_fin - aj.minuto_inicio) >= 500
-ORDER BY GolesPor90Minutos DESC;
+ORDER BY PromedioGoles DESC;
 """
 
 # 3. EJECUTAR CONSULTA
-print("Buscando jugadores con mejor promedio de goles en Mundiales...")
+print("Buscando jugadores con mejor promedio de goles en mundiales...")
 dataframe_goleadores = pandas.read_sql(consulta_sql, motor_base_datos)
 
 # 4. VERIFICAR QUE HAYA DATOS
@@ -39,121 +34,113 @@ if len(dataframe_goleadores) == 0:
     exit()
 
 print("Datos obtenidos:")
-print(dataframe_goleadores[['NombreJugador', 'Goles', 'MinutosJugados', 'GolesPor90Minutos']].to_string(index=False))
+print(dataframe_goleadores[['NombreJugador', 'Goles', 'PartidosJugados', 'PromedioGoles']].to_string(index=False))
 
 # 5. CREAR LA GRAFICA
-print("Dibujando grafica de eficiencia goleadora...")
+print("Dibujando grafica de promedio de goles en mundiales...")
 
-# Crear figura con dos subgraficas
-figura, (grafica_barras, grafica_tabla) = matplotlib.pyplot.subplots(1, 2, figsize=(14, 6))
-figura.suptitle('Jugadores con mejor promedio de goles en Mundiales (minimo 500 minutos)', 
-                fontsize=12, fontweight='bold')
+# Crear una sola grafica de barras horizontales
+figura, grafica = matplotlib.pyplot.subplots(figsize=(10, 6))
+figura.suptitle('Jugadores con mejor promedio de goles en Copas del Mundo', 
+                fontsize=14, fontweight='bold')
 
 # --------------------------------------------------
-# GRAFICA IZQUIERDA: BARRAS DE GOLES POR 90 MINUTOS
+# PREPARAR DATOS
 # --------------------------------------------------
 lista_jugadores = dataframe_goleadores['NombreJugador'].tolist()
-lista_promedios = dataframe_goleadores['GolesPor90Minutos'].tolist()
+lista_promedios = dataframe_goleadores['PromedioGoles'].tolist()
 lista_goles = dataframe_goleadores['Goles'].tolist()
-lista_minutos = dataframe_goleadores['MinutosJugados'].tolist()
-posiciones_x = range(len(lista_jugadores))
+lista_partidos = dataframe_goleadores['PartidosJugados'].tolist()
 
-# Colores degradados (mas oscuro el que tiene mejor promedio)
-colores = ['#08306b', '#08519c', '#2171b5', '#4292c6', '#6baed6']
+# Invertir para que el mejor aparezca arriba
+lista_jugadores.reverse()
+lista_promedios.reverse()
+lista_goles.reverse()
+lista_partidos.reverse()
 
-barras = grafica_barras.bar(
-    posiciones_x,
+posiciones_y = range(len(lista_jugadores))
+
+# --------------------------------------------------
+# BARRAS HORIZONTALES
+# --------------------------------------------------
+# Colores basicos de matplotlib
+colores = ['darkblue', 'blue', 'royalblue', 'cornflowerblue', 'lightblue']
+colores.reverse()  # para que el mejor tenga el color mas oscuro
+
+barras = grafica.barh(
+    posiciones_y,
     lista_promedios,
-    color=colores[:len(lista_jugadores)],
-    alpha=0.9,
+    color=colores,
+    alpha=0.8,
     edgecolor='black',
     linewidth=1
 )
 
-grafica_barras.set_xlabel('Jugador')
-grafica_barras.set_ylabel('Goles por cada 90 minutos')
-grafica_barras.set_title('Eficiencia goleadora')
-grafica_barras.set_xticks(posiciones_x)
-grafica_barras.set_xticklabels(lista_jugadores, rotation=45, ha='right', fontsize=9)
-grafica_barras.grid(axis='y', alpha=0.3, linestyle='--')
+grafica.set_xlabel('Promedio de goles por partido')
+grafica.set_ylabel('Jugador')
+grafica.set_title('Top 5 goleadores mas efectivos en mundiales')
+grafica.set_yticks(posiciones_y)
+grafica.set_yticklabels(lista_jugadores)
+grafica.grid(axis='x', alpha=0.3, linestyle='--')
 
-# Agregar el valor exacto encima de cada barra
-for indice, (barra, valor, goles, minutos) in enumerate(zip(barras, lista_promedios, lista_goles, lista_minutos)):
-    altura = barra.get_height()
-    grafica_barras.text(
-        barra.get_x() + barra.get_width()/2.,  # centro de la barra
-        altura + 0.05,                          # un poco arriba
-        f'{valor:.2f}',                          # promedio con 2 decimales
-        ha='center',
-        va='bottom',
-        fontsize=9,
+# Agregar el valor exacto al final de cada barra
+for i, (barra, promedio, goles, partidos) in enumerate(zip(barras, lista_promedios, lista_goles, lista_partidos)):
+    ancho = barra.get_width()
+    grafica.text(
+        ancho + 0.05,
+        i,
+        f'{promedio:.2f}',
+        va='center',
+        fontsize=10,
         fontweight='bold'
     )
     
-    # Informacion adicional en la base de la barra
-    grafica_barras.text(
-        barra.get_x() + barra.get_width()/2.,
-        0.1,
-        f'{int(goles)} goles\n{int(minutos)} min',
-        ha='center',
-        va='bottom',
-        fontsize=7,
-        color='white',
-        fontweight='bold'
-    )
+    # Informacion adicional dentro de la barra si hay espacio
+    if ancho > 0.3:
+        grafica.text(
+            ancho/2,
+            i,
+            f'{int(goles)} gol/{int(partidos)} part',
+            va='center',
+            ha='center',
+            color='white',
+            fontweight='bold',
+            fontsize=8
+        )
 
-# Agregar linea de referencia (1 gol por partido = 1.0)
-grafica_barras.axhline(
-    y=1.0,
+# Agregar linea de referencia (1 gol por partido)
+grafica.axvline(
+    x=1.0,
     color='red',
     linestyle='--',
-    linewidth=1.5,
+    linewidth=2,
     alpha=0.7,
     label='1 gol por partido'
 )
-grafica_barras.legend()
+grafica.legend()
 
 # --------------------------------------------------
-# GRAFICA DERECHA: TABLA DE DATOS
+# TABLA DE DATOS
 # --------------------------------------------------
-grafica_tabla.axis('off')
-grafica_tabla.set_title('Detalle de eficiencia', fontsize=12, fontweight='bold')
+# Crear texto de tabla
+texto_tabla = "Jugador                    Goles  Part  Promedio\n"
+texto_tabla += "-" * 45 + "\n"
 
-# Preparar datos para la tabla
-datos_tabla = []
+# Usar datos originales (sin invertir) para la tabla
 for i, fila in dataframe_goleadores.iterrows():
-    datos_tabla.append([
-        fila['NombreJugador'],
-        int(fila['Goles']),
-        int(fila['MinutosJugados']),
-        f"{fila['MinutosJugados']/90:.1f}",
-        f"{fila['GolesPor90Minutos']:.3f}"
-    ])
+    texto_tabla += f"{fila['NombreJugador'][:25]:25} {int(fila['Goles']):5} {int(fila['PartidosJugados']):5} {fila['PromedioGoles']:8.2f}\n"
 
-# Crear la tabla
-tabla = grafica_tabla.table(
-    cellText=datos_tabla,
-    colLabels=['Jugador', 'Goles', 'Minutos', 'Partidos\nequival', 'G/90\'\''],
-    loc='center',
-    cellLoc='center',
-    colWidths=[0.3, 0.15, 0.15, 0.15, 0.15]
+# Posicionar tabla en la esquina inferior derecha
+grafica.text(
+    0.98, 0.02,
+    texto_tabla,
+    transform=grafica.transAxes,
+    fontsize=8,
+    fontfamily='monospace',
+    verticalalignment='bottom',
+    horizontalalignment='right',
+    bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.9)
 )
-
-# Dar formato a la tabla
-tabla.auto_set_font_size(False)
-tabla.set_fontsize(9)
-tabla.scale(1.2, 1.5)
-
-# Colorear la fila del primer lugar
-for j in range(len(datos_tabla[0])):
-    tabla[(1, j)].set_facecolor('#ffffcc')  # amarillo claro
-    tabla[(1, j)].set_text_props(weight='bold')
-
-# Colorear filas alternadas
-for i in range(2, len(datos_tabla) + 1):
-    if i % 2 == 0:
-        for j in range(len(datos_tabla[0])):
-            tabla[(i, j)].set_facecolor('#f0f0f0')
 
 # --------------------------------------------------
 # AJUSTES FINALES
